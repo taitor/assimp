@@ -32,7 +32,7 @@ CMAKE_C_COMPILER=$(xcrun -find cc)
 CMAKE_CXX_COMPILER=$(xcrun -find c++)
 
 BUILD_ARCHS_DEVICE="arm64e arm64 armv7s armv7"
-BUILD_ARCHS_SIMULATOR="x86_64 i386"
+BUILD_ARCHS_SIMULATOR="arm64:simulator x86_64:simulator i386:simulator"
 BUILD_ARCHS_ALL=($BUILD_ARCHS_DEVICE $BUILD_ARCHS_SIMULATOR)
 
 CPP_DEV_TARGET_LIST=(miphoneos-version-min mios-simulator-version-min)
@@ -48,8 +48,9 @@ build_arch()
 {
     IOS_SDK_DEVICE=iPhoneOS
     CPP_DEV_TARGET=${CPP_DEV_TARGET_LIST[0]}
+    ARCH=$(echo $1 | cut -d ':' -f 1)
 
-    if [[ "$BUILD_ARCHS_SIMULATOR" =~ "$1" ]]
+    if [[ "$1" =~ ":simulator" ]]
     then
         echo '[!] Target SDK set to SIMULATOR.'
         IOS_SDK_DEVICE=iPhoneSimulator
@@ -64,19 +65,19 @@ build_arch()
     #export CPP="$CC -E"
     export DEVROOT=$XCODE_ROOT_DIR/Platforms/$IOS_SDK_DEVICE.platform/Developer
     export SDKROOT=$DEVROOT/SDKs/$IOS_SDK_DEVICE$IOS_SDK_VERSION.sdk
-    export CFLAGS="-arch $1 -pipe -no-cpp-precomp -stdlib=$CPP_STD_LIB -isysroot $SDKROOT -I$SDKROOT/usr/include/ -$CPP_DEV_TARGET=$IOS_SDK_TARGET"
+    export CFLAGS="-arch $ARCH -pipe -no-cpp-precomp -stdlib=$CPP_STD_LIB -isysroot $SDKROOT -I$SDKROOT/usr/include/ -$CPP_DEV_TARGET=$IOS_SDK_TARGET"
      if [[ "$BUILD_TYPE" =~ "Debug" ]]; then
       export CFLAGS="$CFLAGS -Og"
      else
 	     export CFLAGS="$CFLAGS -O3"
      fi
-    export LDFLAGS="-arch $1 -isysroot $SDKROOT -L$SDKROOT/usr/lib/"
+    export LDFLAGS="-arch $ARCH -isysroot $SDKROOT -L$SDKROOT/usr/lib/"
     export CPPFLAGS="$CFLAGS"
     export CXXFLAGS="$CFLAGS -std=$CPP_STD"
 
     rm CMakeCache.txt
     
-    CMAKE_CLI_INPUT="-DCMAKE_C_COMPILER=$CMAKE_C_COMPILER -DCMAKE_CXX_COMPILER=$CMAKE_CXX_COMPILER -DCMAKE_TOOLCHAIN_FILE=./port/iOS/IPHONEOS_$(echo $1 | tr '[:lower:]' '[:upper:]')_TOOLCHAIN.cmake -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DENABLE_BOOST_WORKAROUND=ON -DBUILD_SHARED_LIBS=$BUILD_SHARED_LIBS"
+    CMAKE_CLI_INPUT="-DCMAKE_C_COMPILER=$CMAKE_C_COMPILER -DCMAKE_CXX_COMPILER=$CMAKE_CXX_COMPILER -DCMAKE_TOOLCHAIN_FILE=./port/iOS/IPHONEOS_$(echo $1 | tr ':' '_' | tr '[:lower:]' '[:upper:]')_TOOLCHAIN.cmake -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DENABLE_BOOST_WORKAROUND=ON -DBUILD_SHARED_LIBS=$BUILD_SHARED_LIBS"
     
     echo "[!] Running CMake with -G 'Unix Makefiles' $CMAKE_CLI_INPUT"
     
@@ -89,7 +90,7 @@ build_arch()
     
     if [[ "$BUILD_SHARED_LIBS" =~ "ON" ]]; then
     	echo "[!] Moving built dynamic libraries into: $BUILD_DIR/$1/"
-    	mv ./lib/*.dylib  $BUILD_DIR/$1/
+    	mv ./bin/*.dylib  $BUILD_DIR/$1/
     fi
     
     echo "[!] Moving built static libraries into: $BUILD_DIR/$1/"
@@ -101,7 +102,8 @@ echo "[!] $0 - assimp iOS build script"
 CPP_STD_LIB=${CPP_STD_LIB_LIST[0]}
 CPP_STD=${CPP_STD_LIST[0]}
 DEPLOY_ARCHS=${BUILD_ARCHS_ALL[*]}
-DEPLOY_FAT=1
+DEPLOY_FAT=0
+DEPLOY_XCFRAMEWORK=0
 
 for i in "$@"; do
     case $i in
@@ -125,12 +127,17 @@ for i in "$@"; do
     	BUILD_SHARED_LIBS=ON        
         echo "[!] Will generate dynamic libraries"
     ;;
-    -n|--no-fat)
-        DEPLOY_FAT=0
-        echo "[!] Fat binary will not be created."
+    -f|--fat)
+        DEPLOY_FAT=1
+        echo "[!] Fat binary will be created."
+    ;;
+    -x|--xcframework)
+        DEPLOY_XCFRAMEWORK=1
+        echo "[!] XCFramework will be created."
     ;;
     -h|--help)
-        echo " - don't build fat library (--no-fat)."
+        echo " - build fat library (--fat)."
+        echo " - build XCFramework (--xcframework)."
         echo " - Include debug information and symbols, no compiler optimizations (--debug)."
         echo " - generate dynamic libraries rather than static ones (--shared-lib)."
         echo " - supported architectures (--archs):  $(echo $(join , ${BUILD_ARCHS_ALL[*]}) | sed 's/,/, /g')"
@@ -160,10 +167,11 @@ make_fat_static_or_shared_binary()
 	LIB_NAME=$1
 	LIPO_ARGS=''
     for ARCH_TARGET in $DEPLOY_ARCHS; do
+        ARCH=$(echo $ARCH_TARGET | cut -d ':' -f 1)
         if [[ "$BUILD_SHARED_LIBS" =~ "ON" ]]; then
-            LIPO_ARGS="$LIPO_ARGS-arch $ARCH_TARGET $BUILD_DIR/$ARCH_TARGET/$LIB_NAME.dylib "
+            LIPO_ARGS="$LIPO_ARGS-arch $ARCH $BUILD_DIR/$ARCH_TARGET/$LIB_NAME.dylib "
         else
-            LIPO_ARGS="$LIPO_ARGS-arch $ARCH_TARGET $BUILD_DIR/$ARCH_TARGET/$LIB_NAME.a "
+            LIPO_ARGS="$LIPO_ARGS-arch $ARCH $BUILD_DIR/$ARCH_TARGET/$LIB_NAME.a "
         fi
     done
     if [[ "$BUILD_SHARED_LIBS" =~ "ON" ]]; then
@@ -179,7 +187,8 @@ make_fat_static_binary()
 	LIB_NAME=$1
 	LIPO_ARGS=''
     for ARCH_TARGET in $DEPLOY_ARCHS; do
-        LIPO_ARGS="$LIPO_ARGS-arch $ARCH_TARGET $BUILD_DIR/$ARCH_TARGET/$LIB_NAME.a "
+        ARCH=$(echo $ARCH_TARGET | cut -d ':' -f 1)
+        LIPO_ARGS="$LIPO_ARGS-arch $ARCH $BUILD_DIR/$ARCH_TARGET/$LIB_NAME.a "
     done
     LIPO_ARGS="$LIPO_ARGS -create -output $BUILD_DIR/$LIB_NAME-fat.a"
     lipo $LIPO_ARGS
@@ -201,5 +210,89 @@ if [[ "$DEPLOY_FAT" -eq 1 ]]; then
     echo "[!] Done! The fat binaries can be found at $BUILD_DIR"
 fi
 
+make_fat_for_xcframework()
+{
+    LIB_NAME=$1
+    FAT_NAME=$2
+    ARCHS=${@:3}
 
+    LIPO_ARGS=''
+    for ARCH_TARGET in $ARCHS; do
+        ARCH=$(echo $ARCH_TARGET | cut -d ':' -f 1)
+        if [[ "$BUILD_SHARED_LIBS" =~ "ON" ]]; then
+            LIPO_ARGS="$LIPO_ARGS-arch $ARCH $BUILD_DIR/$ARCH_TARGET/$LIB_NAME.dylib "
+        else
+            LIPO_ARGS="$LIPO_ARGS-arch $ARCH $BUILD_DIR/$ARCH_TARGET/$LIB_NAME.a "
+        fi
+    done
+    if [[ "$BUILD_SHARED_LIBS" =~ "ON" ]]; then
+        LIPO_ARGS="$LIPO_ARGS -create -output $BUILD_DIR/$FAT_NAME.dylib"
+    else
+        LIPO_ARGS="$LIPO_ARGS -create -output $BUILD_DIR/$FAT_NAME.a"
+    fi
 
+    lipo $LIPO_ARGS
+}
+
+make_xcframework()
+{
+    LIB_NAME=$1
+    XCFRAMEWORK_NAME=$2
+
+    DEVICE_ARCHS=()
+    SIMULATOR_ARCHS=()
+    HAS_DEVICE=0
+    HAS_SIMULATOR=0
+    for ARCH_TARGET in $DEPLOY_ARCHS; do
+        if [[ "$ARCH_TARGET" =~ ":simulator" ]]; then
+            SIMULATOR_ARCHS+=($ARCH_TARGET)
+            HAS_SIMULATOR=1
+        else
+            DEVICE_ARCHS+=($ARCH_TARGET)
+            HAS_DEVICE=1
+        fi
+    done
+
+    LIBRARY_ARGS=''
+    for PLATFORM in device simulator; do
+        if [[ $PLATFORM = device ]]; then
+            ARCHS=${DEVICE_ARCHS[@]}
+            FLAG=$HAS_DEVICE
+            FAT_NAME=$LIB_NAME
+        else
+            ARCHS=${SIMULATOR_ARCHS[@]}
+            FLAG=$HAS_SIMULATOR
+            FAT_NAME=$LIB_NAME-simulator
+        fi
+
+        if (($FLAG)); then
+            make_fat_for_xcframework $LIB_NAME $FAT_NAME ${ARCHS[@]}
+            LIBRARY_ARGS="$LIBRARY_ARGS-library $BUILD_DIR/$FAT_NAME"
+            if [[ "$BUILD_SHARED_LIBS" =~ "ON" ]]; then
+                LIBRARY_ARGS="$LIBRARY_ARGS.dylib"
+            else
+                LIBRARY_ARGS="$LIBRARY_ARGS.a"
+            fi
+            LIBRARY_ARGS="$LIBRARY_ARGS "
+        fi
+    done
+
+    echo "xcodebuild -create-xcframework $LIBRARY_ARGS -output $BUILD_DIR/$XCFRAMEWORK_NAME"
+    xcodebuild -create-xcframework $LIBRARY_ARGS -output $BUILD_DIR/$XCFRAMEWORK_NAME
+}
+
+if [[ "$DEPLOY_XCFRAMEWORK" -eq 1 ]]; then
+    echo '[+] Creating XCFramework ...'
+
+    if [[ "$BUILD_TYPE" =~ "Debug" ]]; then
+        make_xcframework libassimpd assimpd.xcframework
+        make_xcframework libIrrXMLd IrrXMLd.xcframework
+        make_xcframework libzlibstaticd zlibstaticd.xcframework
+    else
+        make_xcframework libassimp assimp.xcframework
+        make_xcframework libIrrXML IrrXML.xcframework
+        make_xcframework libzlibstatic zlibstatic.xcframework
+    fi
+
+    echo "[!] Done! The XCFramework can be found at $BUILD_DIR"
+fi

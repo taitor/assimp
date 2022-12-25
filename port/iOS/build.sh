@@ -69,7 +69,7 @@ build_arch()
      if [[ "$BUILD_TYPE" =~ "Debug" ]]; then
       export CFLAGS="$CFLAGS -Og"
      else
-	     export CFLAGS="$CFLAGS -O3"
+	     export CFLAGS="$CFLAGS -Os"
      fi
     export LDFLAGS="-arch $ARCH -isysroot $SDKROOT -L$SDKROOT/usr/lib/"
     export CPPFLAGS="$CFLAGS"
@@ -78,6 +78,8 @@ build_arch()
     rm CMakeCache.txt
     
     CMAKE_CLI_INPUT="-DCMAKE_C_COMPILER=$CMAKE_C_COMPILER -DCMAKE_CXX_COMPILER=$CMAKE_CXX_COMPILER -DCMAKE_TOOLCHAIN_FILE=./port/iOS/IPHONEOS_$(echo $1 | tr ':' '_' | tr '[:lower:]' '[:upper:]')_TOOLCHAIN.cmake -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DENABLE_BOOST_WORKAROUND=ON -DBUILD_SHARED_LIBS=$BUILD_SHARED_LIBS"
+
+    CMAKE_CLI_INPUT="${CMAKE_CLI_INPUT} -DASSIMP_NO_EXPORT=ON -DASSIMP_BUILD_TESTS=OFF -DASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT=OFF -DASSIMP_BUILD_X_IMPORTER=ON -DASSIMP_BUILD_OBJ_IMPORTER=ON"
     
     echo "[!] Running CMake with -G 'Unix Makefiles' $CMAKE_CLI_INPUT"
     
